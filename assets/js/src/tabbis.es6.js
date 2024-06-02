@@ -1,9 +1,10 @@
 class tabbisClass {
-	init(options) {
-		this.thisOptions(options);
-		this.thisMemory();
-		this.setup();
-	}
+
+    constructor(options) {
+        this.thisOptions(options);
+        this.thisMemory();
+        this.setup();
+    }
 
 	// Setup
 	setup() {
@@ -31,7 +32,7 @@ class tabbisClass {
 
 				// Trigger event
 				tabItem.addEventListener(this.options.trigger, (e) => {
-					this.activate(e.currentTarget, tabItem.groupIndex);
+					this.toggle(e.currentTarget, tabItem.groupIndex);
 				});
 
 				// Key event
@@ -43,8 +44,7 @@ class tabbisClass {
 			});
 
 			if (activeIndex !== null) {
-				this.activateTab([ ...tabGroups.children ][activeIndex]);
-				this.activatePane([ ...paneGroups.children ][activeIndex]);
+                this.toggle([ ...tabGroups.children ][activeIndex]);
 			}
 		});
 	}
@@ -100,8 +100,8 @@ class tabbisClass {
 	}
 
 	// Emit event
-	emitEvent(tab, pane) {
-		let event = new CustomEvent('tabbis', {
+	emitEvent(eventName, tab, pane) {
+		let event = new CustomEvent(eventName, {
 			bubbles: true,
 			detail: {
 				tab: tab,
@@ -144,36 +144,65 @@ class tabbisClass {
 
 		tab.setAttribute('role', 'tab');
 		tab.setAttribute('aria-controls', `${prefix}tabpanel-${groupIndex}-${tabIndex}`);
-		tab.setAttribute('id', `${prefix}tab-${groupIndex}-${tabIndex}`);
 	}
 
 	// Add tabpanel attributes
 	addPaneAttributes(tab, pane) {
 		pane.setAttribute('role', 'tabpanel');
 		pane.setAttribute('aria-labelledby', tab.getAttribute('id'));
-		pane.setAttribute('id', tab.getAttribute('aria-controls'));
-		pane.setAttribute('tabindex', '0');
+        pane.setAttribute('aria-controled-by', tab.getAttribute('aria-controls'));
+        pane.setAttribute('tabindex', '0');
 	}
+
+    toggle(tab, i) {
+        if(this.isActiveTab(tab, i) && this.options.collapsible) {
+            this.resetForTab(tab);
+            this.resetMemoryGroup(i);
+        } else {
+            this.activate(tab,i);
+        }
+    }
+
+    resetForTab(tab) {
+        const pane = this.getPaneForTab(tab);
+        this.resetTabs([ ...tab.parentNode.children ]);
+        this.resetPanes([ ...pane.parentElement.children ]);
+    }
+
+    getPaneForTab(tab) {
+        return document.querySelector('[aria-controled-by="'+tab.getAttribute('aria-controls')+'"]');
+    }
 
 	// Activate
 	activate(tab, i) {
-		const pane = document.querySelector(`#${tab.getAttribute('aria-controls')}`);
+        this.resetForTab(tab)
 
-		this.resetTabs([ ...tab.parentNode.children ]);
-		this.resetPanes([ ...pane.parentElement.children ]);
+        const pane = this.getPaneForTab(tab);
+        if(tab.getAttribute('data-ajax')) {
+            this.loadPaneContent(tab, pane);
+            tab.removeAttribute('data-ajax');
+        }
 
 		this.activateTab(tab);
 		this.activatePane(pane);
 
 		this.saveMemory(tab, i);
 
-		this.emitEvent(tab, pane);
-	}
+		this.emitEvent('tabbis', tab, pane);
+        this.emitEvent('tabbis_pane_activate', tab, pane);
+
+    }
+
+    isActiveTab(tab) {
+        return tab.getAttribute('aria-selected') === "true";
+    }
 
 	// Activate tab
 	activateTab(tab) {
+
 		tab.setAttribute('aria-selected', 'true');
 		tab.setAttribute('tabindex', '0');
+        tab.classList.add(this.options.tabActiveClass);
 	}
 
 	// Activate pane
@@ -181,9 +210,42 @@ class tabbisClass {
 		pane.removeAttribute('hidden');
 	}
 
+    loadPaneContent(tab, pane) {
+        let paneXhrUri = tab.getAttribute('data-ajax');
+        if(!paneXhrUri) {
+            throw new Error("No data-ajax attribute");
+        }
+
+        fetch(paneXhrUri, {
+                //To be compliant with \Laminas\Http\Request::isXmlHttpRequest
+                headers: {
+                    "X-Requested-With": "XMLHttpRequest",
+                }
+            }
+        )
+        .then(response => {
+        if (!response.ok) {
+            throw new Error(response.status + " Failed Fetch ");
+        }
+        return response.text()
+        })
+        .then(function (html) {
+            // console.log(html);
+            pane.innerHTML = html;
+            this.emitEvent('tabbis_pane_ajax_loaded', tab, pane);
+        }.bind(this))
+        .catch((err) =>
+            console.log("Can’t access " + url + " response. Blocked by browser?" + err)
+        );
+
+    }
+
 	// Remove tab attributes
 	resetTabs(tabs) {
-		tabs.forEach((el) => el.setAttribute('aria-selected', 'false'));
+		tabs.forEach((el) => {
+            el.setAttribute('aria-selected', 'false')
+            el.classList.remove(this.options.tabActiveClass);
+        });
 		this.resetTabindex(tabs);
 	}
 
@@ -210,6 +272,12 @@ class tabbisClass {
 		localStorage.setItem(this.options.memory, JSON.stringify(this.memory));
 	}
 
+    resetMemoryGroup(groupIndex) {
+        this.memory[groupIndex] = null;
+        localStorage.setItem(this.options.memory, JSON.stringify(this.memory));
+    }
+
+
 	// This memory
 	thisMemory() {
 		if (!this.options.memory) return;
@@ -227,9 +295,11 @@ class tabbisClass {
 			paneGroup: '[data-panes]',
 			prefix: '',
 			tabActive: '[data-active]',
+            tabActiveClass: 'ui-tabs-active',
 			tabActiveFallback: 0,
 			tabGroup: '[data-tabs]',
-			trigger: 'click'
+			trigger: 'click',
+            collapsible: false
 		};
 	}
 
@@ -243,6 +313,5 @@ class tabbisClass {
 
 // Function call
 function tabbis(options = {}) {
-	const tabs = new tabbisClass();
-	tabs.init(options);
+	const tabs = new tabbisClass(options);
 }
